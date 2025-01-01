@@ -44,7 +44,9 @@ RabbitmqClient::~RabbitmqClient() { Disconnect(); }
 void RabbitmqClient::Connect() {
   if (!IsConnected()) {
     try {
-      _channel->DeclareQueue("write-home-timeline", false, true, false, false);
+      if (!_channel->QueueExists("write-home-timeline")) {
+        _channel->DeclareQueue("write-home-timeline", false, true, false, false);
+      }
     } catch (...) {
       throw;
     }
