@@ -33,6 +33,8 @@ class ClientPool {
   void Remove(TClient *);
 
  private:
+ // New: Check health before reuse
+  bool HealthCheck(TClient *client); 
   std::deque<TClient *> _pool;
   std::string _addr;
   std::string _client_type;
@@ -110,6 +112,12 @@ TClient * ClientPool<TClient>::Pop() {
   if (client) {
     try {
       client->Connect();
+      // Check client health
+      if (!HealthCheck(client)) { 
+        LOG(warning) << "Unhealthy client detected, recreating...";
+        Remove(client);
+        return Pop();  // Retry with a new client
+      }
     } catch (...) {
       LOG(error) << "Failed to connect " + _client_type;
       Remove(client);
@@ -121,10 +129,16 @@ TClient * ClientPool<TClient>::Pop() {
 
 template<class TClient>
 void ClientPool<TClient>::Push(TClient *client) {
-  std::unique_lock<std::mutex> cv_lock(_mtx);
-  _pool.push_back(client);
-  cv_lock.unlock();
-  _cv.notify_one();
+  // Ensure client is healthy
+  if (client && HealthCheck(client)) {  
+    std::unique_lock<std::mutex> cv_lock(_mtx);
+    _pool.push_back(client);
+    cv_lock.unlock();
+    _cv.notify_one();
+  } else {
+    LOG(warning) << "Discarding unhealthy client";
+    Remove(client);
+  }
 }
 
 template<class TClient>
@@ -145,6 +159,15 @@ void ClientPool<TClient>::Keepalive(TClient *client) {
     Remove(client);
   } else {
     Push(client);
+  }
+}
+
+template<class TClient>
+bool ClientPool<TClient>::HealthCheck(TClient *client) {
+  try {
+    return client->Ping();
+  } catch (...) {
+    return false;
   }
 }
 
